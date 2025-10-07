@@ -22,9 +22,10 @@ jobs:
       uses: actions/checkout@v4
       
     - name: Set up Python ${{ matrix.python-version }}
-      uses: actions/setup-python@v4
+      uses: actions/setup-python@v5
       with:
         python-version: ${{ matrix.python-version }}
+        cache: 'pip'
         
     - name: Install system dependencies (Linux)
       if: runner.os == 'Linux'
@@ -48,10 +49,9 @@ jobs:
         python -m pip install --upgrade pip
         pip install -r requirements.txt || echo "requirements.txt not found, installing dependencies manually"
         pip install \
-          pillow \
-          tkinter-tooltip \
-          pyinstaller \
-          requests
+          pillow>=10.0.0 \
+          requests>=2.31.0 \
+          pyinstaller>=5.13.0
         
     - name: Get latest version file
       id: get_version
@@ -189,6 +189,8 @@ jobs:
         
     - name: Download all artifacts
       uses: actions/download-artifact@v4
+      with:
+        merge-multiple: true
       
     - name: Create Release
       uses: softprops/action-gh-release@v1
@@ -218,12 +220,11 @@ jobs:
           - 4GB RAM empfohlen
           
         files: |
-          os-materialmaker-windows-*/os-materialmaker-*-windows-portable.zip
-          os-materialmaker-linux-*/os-materialmaker-*-linux-portable.tar.gz
-          os-materialmaker-windows-*/os-materialmaker-*-windows.exe
-          os-materialmaker-linux-*/os-materialmaker-*-linux
+          *windows-portable.zip
+          *linux-portable.tar.gz
+          *windows.exe
+          *linux
         draft: false
         prerelease: false
       env:
-
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
