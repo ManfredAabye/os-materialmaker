@@ -1,0 +1,228 @@
+name: Build os-materialmaker
+
+on:
+  push:
+    branches: [ main, develop ]
+    tags: [ 'v*' ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        os: [windows-latest, ubuntu-latest]
+        python-version: ['3.11']
+    
+    runs-on: ${{ matrix.os }}
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      
+    - name: Set up Python ${{ matrix.python-version }}
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ matrix.python-version }}
+        
+    - name: Install system dependencies (Linux)
+      if: runner.os == 'Linux'
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y \
+          libgl1-mesa-glx \
+          libglib2.0-0 \
+          libxrandr2 \
+          libxss1 \
+          libxcursor1 \
+          libxcomposite1 \
+          libasound2 \
+          libxi6 \
+          libxtst6 \
+          libgtk-3-0 \
+          python3-tk
+        
+    - name: Install Python dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt || echo "requirements.txt not found, installing dependencies manually"
+        pip install \
+          pillow \
+          tkinter-tooltip \
+          pyinstaller \
+          requests
+        
+    - name: Get latest version file
+      id: get_version
+      shell: bash
+      run: |
+        # Finde die neueste Version
+        LATEST_FILE=$(ls os-materialmaker_*.py | sort -V | tail -1)
+        echo "latest_file=$LATEST_FILE" >> $GITHUB_OUTPUT
+        
+        # Extrahiere Versionsnummer
+        VERSION=$(echo $LATEST_FILE | sed 's/os-materialmaker_\(.*\)\.py/\1/')
+        echo "version=$VERSION" >> $GITHUB_OUTPUT
+        echo "Latest version: $VERSION"
+        echo "Latest file: $LATEST_FILE"
+        
+    - name: Syntax check
+      run: |
+        python -m py_compile ${{ steps.get_version.outputs.latest_file }}
+        
+    - name: Create build directory
+      run: |
+        mkdir -p dist
+        
+    - name: Build with PyInstaller (Windows)
+      if: runner.os == 'Windows'
+      run: |
+        pyinstaller --onefile \
+          --windowed \
+          --name "os-materialmaker-${{ steps.get_version.outputs.version }}-windows" \
+          --icon="Resources/icons/app-icon.ico" \
+          --add-data "Resources;Resources" \
+          --hidden-import="PIL._tkinter_finder" \
+          --hidden-import="tkinter" \
+          --hidden-import="tkinter.ttk" \
+          --hidden-import="tkinter.filedialog" \
+          --hidden-import="tkinter.messagebox" \
+          --collect-submodules="PIL" \
+          ${{ steps.get_version.outputs.latest_file }}
+          
+    - name: Build with PyInstaller (Linux)
+      if: runner.os == 'Linux'
+      run: |
+        pyinstaller --onefile \
+          --name "os-materialmaker-${{ steps.get_version.outputs.version }}-linux" \
+          --add-data "Resources:Resources" \
+          --hidden-import="PIL._tkinter_finder" \
+          --hidden-import="tkinter" \
+          --hidden-import="tkinter.ttk" \
+          --hidden-import="tkinter.filedialog" \
+          --hidden-import="tkinter.messagebox" \
+          --collect-submodules="PIL" \
+          ${{ steps.get_version.outputs.latest_file }}
+          
+    - name: Create portable package (Windows)
+      if: runner.os == 'Windows'
+      shell: bash
+      run: |
+        mkdir -p portable-windows
+        cp dist/os-materialmaker-${{ steps.get_version.outputs.version }}-windows.exe portable-windows/
+        cp -r Resources portable-windows/ || echo "Resources directory not found"
+        cp README.md portable-windows/ || echo "README.md not found"
+        cp LICENSE portable-windows/ || echo "LICENSE not found"
+        
+        # Erstelle Start-Script
+        cat > portable-windows/start.bat << 'EOF'
+        @echo off
+        echo Starting os-materialmaker...
+        os-materialmaker-${{ steps.get_version.outputs.version }}-windows.exe
+        pause
+        EOF
+        
+    - name: Create portable package (Linux)
+      if: runner.os == 'Linux'
+      run: |
+        mkdir -p portable-linux
+        cp dist/os-materialmaker-${{ steps.get_version.outputs.version }}-linux portable-linux/
+        cp -r Resources portable-linux/ || echo "Resources directory not found"
+        cp README.md portable-linux/ || echo "README.md not found"
+        cp LICENSE portable-linux/ || echo "LICENSE not found"
+        chmod +x portable-linux/os-materialmaker-${{ steps.get_version.outputs.version }}-linux
+        
+        # Erstelle Start-Script
+        cat > portable-linux/start.sh << 'EOF'
+        #!/bin/bash
+        echo "Starting os-materialmaker..."
+        ./os-materialmaker-${{ steps.get_version.outputs.version }}-linux
+        EOF
+        chmod +x portable-linux/start.sh
+        
+    - name: Create ZIP archive (Windows)
+      if: runner.os == 'Windows'
+      shell: bash
+      run: |
+        cd portable-windows
+        7z a ../os-materialmaker-${{ steps.get_version.outputs.version }}-windows-portable.zip .
+        cd ..
+        
+    - name: Create TAR archive (Linux)
+      if: runner.os == 'Linux'
+      run: |
+        tar -czf os-materialmaker-${{ steps.get_version.outputs.version }}-linux-portable.tar.gz -C portable-linux .
+        
+    - name: Upload Windows artifacts
+      if: runner.os == 'Windows'
+      uses: actions/upload-artifact@v3
+      with:
+        name: os-materialmaker-windows-${{ steps.get_version.outputs.version }}
+        path: |
+          dist/os-materialmaker-${{ steps.get_version.outputs.version }}-windows.exe
+          os-materialmaker-${{ steps.get_version.outputs.version }}-windows-portable.zip
+          
+    - name: Upload Linux artifacts
+      if: runner.os == 'Linux'
+      uses: actions/upload-artifact@v3
+      with:
+        name: os-materialmaker-linux-${{ steps.get_version.outputs.version }}
+        path: |
+          dist/os-materialmaker-${{ steps.get_version.outputs.version }}-linux
+          os-materialmaker-${{ steps.get_version.outputs.version }}-linux-portable.tar.gz
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      
+    - name: Get version from tag
+      id: get_tag_version
+      run: |
+        VERSION=${GITHUB_REF#refs/tags/v}
+        echo "version=$VERSION" >> $GITHUB_OUTPUT
+        
+    - name: Download all artifacts
+      uses: actions/download-artifact@v3
+      
+    - name: Create Release
+      uses: softprops/action-gh-release@v1
+      with:
+        name: Release v${{ steps.get_tag_version.outputs.version }}
+        body: |
+          ## os-materialmaker v${{ steps.get_tag_version.outputs.version }}
+          
+          ### 🚀 New Features
+          - PBR Material Editor für Second Life/OpenSim
+          - GLTF Export mit GLTF-Packer Kompatibilität
+          - Auto-Find Algorithmus für Texturen
+          - Vereinfachte 2D-Vorschau
+          
+          ### 📦 Downloads
+          - **Windows**: `os-materialmaker-*-windows-portable.zip`
+          - **Linux**: `os-materialmaker-*-linux-portable.tar.gz`
+          
+          ### 🛠️ Installation
+          1. Download für dein Betriebssystem
+          2. Entpacke das Archiv
+          3. Führe `start.bat` (Windows) oder `start.sh` (Linux) aus
+          
+          ### 📋 Systemanforderungen
+          - Windows 10+ oder Linux (Ubuntu 20.04+)
+          - Python 3.11+ (falls aus Source)
+          - 4GB RAM empfohlen
+          
+        files: |
+          os-materialmaker-windows-*/os-materialmaker-*-windows-portable.zip
+          os-materialmaker-linux-*/os-materialmaker-*-linux-portable.tar.gz
+          os-materialmaker-windows-*/os-materialmaker-*-windows.exe
+          os-materialmaker-linux-*/os-materialmaker-*-linux
+        draft: false
+        prerelease: false
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
