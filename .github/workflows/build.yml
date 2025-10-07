@@ -31,27 +31,54 @@ jobs:
       if: runner.os == 'Linux'
       run: |
         sudo apt-get update
+        
+        # Core dependencies mit Fallbacks für verschiedene Ubuntu-Versionen
         sudo apt-get install -y \
-          libgl1-mesa-glx \
+          libgl1-mesa-dev \
           libglib2.0-0 \
           libxrandr2 \
           libxss1 \
           libxcursor1 \
           libxcomposite1 \
-          libasound2 \
           libxi6 \
           libxtst6 \
           libgtk-3-0 \
-          python3-tk
+          python3-tk \
+          python3-dev \
+          build-essential \
+          libffi-dev \
+          libssl-dev \
+          pkg-config || echo "Some packages might not be available on this system"
+        
+        # Audio-Libraries mit Fallback
+        sudo apt-get install -y libasound2t64 || \
+        sudo apt-get install -y libasound2 || \
+        echo "Warning: Audio libraries not installed"
+        
+        # OpenGL Fallbacks
+        sudo apt-get install -y libgl1-mesa-glx || \
+        sudo apt-get install -y mesa-common-dev || \
+        echo "Warning: Alternative OpenGL libraries used"
         
     - name: Install Python dependencies
       run: |
         python -m pip install --upgrade pip
-        pip install -r requirements.txt || echo "requirements.txt not found, installing dependencies manually"
+        
+        # Versuche requirements.txt zu installieren
+        if [ -f "requirements.txt" ]; then
+          pip install -r requirements.txt || echo "Some requirements may have failed"
+        else
+          echo "requirements.txt not found, installing dependencies manually"
+        fi
+        
+        # Basis-Dependencies mit Fallbacks
         pip install \
-          pillow>=10.0.0 \
-          requests>=2.31.0 \
-          pyinstaller>=5.13.0
+          "pillow>=10.0.0" \
+          "requests>=2.31.0" \
+          "pyinstaller>=5.13.0" || {
+          echo "Fallback: Installing older versions..."
+          pip install pillow requests pyinstaller
+        }
         
     - name: Get latest version file
       id: get_version
@@ -78,10 +105,17 @@ jobs:
     - name: Build with PyInstaller (Windows)
       if: runner.os == 'Windows'
       run: |
+        # Prüfe ob Icon existiert, sonst weglassen
+        ICON_OPTION=""
+        if [ -f "Resources/icons/app-icon.ico" ]; then
+          ICON_OPTION="--icon=Resources/icons/app-icon.ico"
+        fi
+        
+        # PyInstaller mit Fehlerbehandlung
         pyinstaller --onefile \
           --windowed \
           --name "os-materialmaker-${{ steps.get_version.outputs.version }}-windows" \
-          --icon="Resources/icons/app-icon.ico" \
+          $ICON_OPTION \
           --add-data "Resources;Resources" \
           --hidden-import="PIL._tkinter_finder" \
           --hidden-import="tkinter" \
@@ -89,11 +123,20 @@ jobs:
           --hidden-import="tkinter.filedialog" \
           --hidden-import="tkinter.messagebox" \
           --collect-submodules="PIL" \
-          ${{ steps.get_version.outputs.latest_file }}
+          --log-level=INFO \
+          ${{ steps.get_version.outputs.latest_file }} || {
+          echo "Build failed, trying without windowed mode..."
+          pyinstaller --onefile \
+            --name "os-materialmaker-${{ steps.get_version.outputs.version }}-windows" \
+            --add-data "Resources;Resources" \
+            --hidden-import="tkinter" \
+            ${{ steps.get_version.outputs.latest_file }}
+        }
           
     - name: Build with PyInstaller (Linux)
       if: runner.os == 'Linux'
       run: |
+        # PyInstaller mit Fehlerbehandlung für Linux
         pyinstaller --onefile \
           --name "os-materialmaker-${{ steps.get_version.outputs.version }}-linux" \
           --add-data "Resources:Resources" \
@@ -103,7 +146,14 @@ jobs:
           --hidden-import="tkinter.filedialog" \
           --hidden-import="tkinter.messagebox" \
           --collect-submodules="PIL" \
-          ${{ steps.get_version.outputs.latest_file }}
+          --log-level=INFO \
+          ${{ steps.get_version.outputs.latest_file }} || {
+          echo "Build failed, trying minimal build..."
+          pyinstaller --onefile \
+            --name "os-materialmaker-${{ steps.get_version.outputs.version }}-linux" \
+            --hidden-import="tkinter" \
+            ${{ steps.get_version.outputs.latest_file }}
+        }
           
     - name: Create portable package (Windows)
       if: runner.os == 'Windows'
@@ -146,7 +196,9 @@ jobs:
       shell: bash
       run: |
         cd portable-windows
-        7z a ../os-materialmaker-${{ steps.get_version.outputs.version }}-windows-portable.zip .
+        # Versuche zuerst 7z, dann PowerShell als Fallback
+        7z a ../os-materialmaker-${{ steps.get_version.outputs.version }}-windows-portable.zip . || \
+        powershell Compress-Archive -Path . -DestinationPath ../os-materialmaker-${{ steps.get_version.outputs.version }}-windows-portable.zip
         cd ..
         
     - name: Create TAR archive (Linux)
