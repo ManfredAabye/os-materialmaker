@@ -1,13 +1,21 @@
 # Core dependencies für os-materialmaker
 Pillow>=10.0.0
 requests>=2.31.0
+numpy>=1.24.0
+tkinterdnd2>=0.3.0
 
 # GUI dependencies (meist bereits in Python enthalten)
 # tkinter - Standard in Python
 # tkinter.ttk - Standard in Python
 
+# Optional dependencies for enhanced functionality
+# PyPBR - for advanced material rendering (if available)
+
 # Build dependencies (nur für Development)
-pyinstaller>=5.13.0
+pyinstaller>=6.0.0
+
+# Additional utilities
+setuptools>=65.0.0
 
 # Optional: Erweiterte Bild-Unterstützung
 # opencv-python>=4.8.0  # Falls OpenCV Features benötigt werden
