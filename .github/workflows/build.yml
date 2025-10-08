@@ -13,7 +13,7 @@ jobs:
     strategy:
       matrix:
         os: [windows-latest, ubuntu-latest]
-        python-version: ['3.11']
+        python-version: ['3.11', '3.12']
     
     runs-on: ${{ matrix.os }}
     
@@ -31,8 +31,6 @@ jobs:
       if: runner.os == 'Linux'
       run: |
         sudo apt-get update
-        
-        # Core dependencies mit Fallbacks für verschiedene Ubuntu-Versionen
         sudo apt-get install -y \
           libgl1-mesa-dev \
           libglib2.0-0 \
@@ -48,51 +46,55 @@ jobs:
           build-essential \
           libffi-dev \
           libssl-dev \
-          pkg-config || echo "Some packages might not be available on this system"
-        
-        # Audio-Libraries mit Fallback
-        sudo apt-get install -y libasound2t64 || \
-        sudo apt-get install -y libasound2 || \
-        echo "Warning: Audio libraries not installed"
-        
-        # OpenGL Fallbacks
-        sudo apt-get install -y libgl1-mesa-glx || \
-        sudo apt-get install -y mesa-common-dev || \
-        echo "Warning: Alternative OpenGL libraries used"
+          pkg-config \
+          libasound2-dev
         
     - name: Install Python dependencies
       run: |
         python -m pip install --upgrade pip
+        pip install pyinstaller>=6.0.0
+        pip install pillow>=10.0.0
+        pip install requests>=2.31.0
+        pip install tkinterdnd2
+        pip install numpy
         
-        # Versuche requirements.txt zu installieren
-        if [ -f "requirements.txt" ]; then
-          pip install -r requirements.txt || echo "Some requirements may have failed"
-        else
-          echo "requirements.txt not found, installing dependencies manually"
-        fi
-        
-        # Basis-Dependencies mit Fallbacks
-        pip install \
-          "pillow>=10.0.0" \
-          "requests>=2.31.0" \
-          "pyinstaller>=5.13.0" || {
-          echo "Fallback: Installing older versions..."
-          pip install pillow requests pyinstaller
-        }
+        # Install requirements.txt if it exists
+        python -c "
+        import os
+        if os.path.exists('requirements.txt'):
+            import subprocess
+            subprocess.run(['pip', 'install', '-r', 'requirements.txt'], check=False)
+            print('requirements.txt installed')
+        else:
+            print('requirements.txt not found')
+        "
         
     - name: Get latest version file
       id: get_version
-      shell: bash
       run: |
-        # Finde die neueste Version
-        LATEST_FILE=$(ls os-materialmaker_*.py | sort -V | tail -1)
-        echo "latest_file=$LATEST_FILE" >> $GITHUB_OUTPUT
-        
-        # Extrahiere Versionsnummer
-        VERSION=$(echo $LATEST_FILE | sed 's/os-materialmaker_\(.*\)\.py/\1/')
-        echo "version=$VERSION" >> $GITHUB_OUTPUT
-        echo "Latest version: $VERSION"
-        echo "Latest file: $LATEST_FILE"
+        # Find the latest version file using Python (cross-platform)
+        python -c "
+        import os, re
+        files = [f for f in os.listdir('.') if f.startswith('os-materialmaker_') and f.endswith('.py')]
+        if files:
+            # Sort by version number
+            def version_key(filename):
+                match = re.search(r'os-materialmaker_(\d+)\.(\d+)\.(\d+)\.py', filename)
+                if match:
+                    return tuple(map(int, match.groups()))
+                return (0, 0, 0)
+            latest = max(files, key=version_key)
+            version = re.search(r'os-materialmaker_(.+)\.py', latest).group(1)
+            print(f'latest_file={latest}')
+            print(f'version={version}')
+            # Write to GitHub output
+            with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
+                f.write(f'latest_file={latest}\n')
+                f.write(f'version={version}\n')
+        else:
+            print('No version files found')
+            exit(1)
+        "
         
     - name: Syntax check
       run: |
@@ -100,91 +102,124 @@ jobs:
         
     - name: Create build directory
       run: |
-        mkdir -p dist
+        python -c "import os; os.makedirs('dist', exist_ok=True)"
         
     - name: Build with PyInstaller (Windows)
       if: runner.os == 'Windows'
       run: |
-        # Prüfe ob Icon existiert, sonst weglassen
-        ICON_OPTION=""
-        if [ -f "Resources/icons/app-icon.ico" ]; then
-          ICON_OPTION="--icon=Resources/icons/app-icon.ico"
-        fi
-        
-        # PyInstaller mit Fehlerbehandlung
-        pyinstaller --onefile \
-          --windowed \
-          --name "os-materialmaker-${{ steps.get_version.outputs.version }}-windows" \
-          $ICON_OPTION \
-          --add-data "Resources;Resources" \
-          --hidden-import="PIL._tkinter_finder" \
-          --hidden-import="tkinter" \
-          --hidden-import="tkinter.ttk" \
-          --hidden-import="tkinter.filedialog" \
-          --hidden-import="tkinter.messagebox" \
-          --collect-submodules="PIL" \
-          --log-level=INFO \
-          ${{ steps.get_version.outputs.latest_file }} || {
-          echo "Build failed, trying without windowed mode..."
-          pyinstaller --onefile \
-            --name "os-materialmaker-${{ steps.get_version.outputs.version }}-windows" \
-            --add-data "Resources;Resources" \
-            --hidden-import="tkinter" \
-            ${{ steps.get_version.outputs.latest_file }}
+        # Check if icon exists and set path accordingly (PowerShell compatible)
+        $iconPath = ""
+        if (Test-Path "Resources\PBRlogok.png") {
+          $iconPath = "Resources\PBRlogok.png"
+          Write-Host "Using icon: $iconPath"
+        } elseif (Test-Path "Resources\icons\app-icon.ico") {
+          $iconPath = "Resources\icons\app-icon.ico"
+          Write-Host "Using icon: $iconPath"
+        } else {
+          Write-Host "No icon found, building without icon"
         }
+        
+        # Build command
+        $buildArgs = @(
+          "--onefile",
+          "--windowed",
+          "--name", "os-materialmaker-${{ steps.get_version.outputs.version }}-windows",
+          "--add-data", "Resources;Resources"
+        )
+        
+        if ($iconPath -ne "") {
+          $buildArgs += "--icon=$iconPath"
+        }
+        
+        $buildArgs += @(
+          "--hidden-import=PIL._tkinter_finder",
+          "--hidden-import=tkinter",
+          "--hidden-import=tkinter.ttk", 
+          "--hidden-import=tkinter.filedialog",
+          "--hidden-import=tkinter.messagebox",
+          "--hidden-import=tkinterdnd2",
+          "--hidden-import=PIL",
+          "--hidden-import=PIL.Image",
+          "--hidden-import=PIL.ImageTk",
+          "--hidden-import=numpy",
+          "--collect-submodules=PIL",
+          "--collect-submodules=tkinter",
+          "--exclude-module=matplotlib",
+          "--exclude-module=scipy", 
+          "--exclude-module=pandas",
+          "--log-level=INFO",
+          "${{ steps.get_version.outputs.latest_file }}"
+        )
+        
+        pyinstaller @buildArgs
           
     - name: Build with PyInstaller (Linux)
       if: runner.os == 'Linux'
       run: |
-        # PyInstaller mit Fehlerbehandlung für Linux
+        # Check for icon file
+        ICON_OPTION=""
+        if [ -f "Resources/PBRlogok.png" ]; then
+          ICON_OPTION="--icon=Resources/PBRlogok.png"
+          echo "Using icon: Resources/PBRlogok.png"
+        elif [ -f "Resources/icons/app-icon.ico" ]; then
+          ICON_OPTION="--icon=Resources/icons/app-icon.ico"
+          echo "Using icon: Resources/icons/app-icon.ico"
+        else
+          echo "No icon found, building without icon"
+        fi
+        
+        # Build with PyInstaller
         pyinstaller --onefile \
           --name "os-materialmaker-${{ steps.get_version.outputs.version }}-linux" \
+          ${ICON_OPTION} \
           --add-data "Resources:Resources" \
           --hidden-import="PIL._tkinter_finder" \
           --hidden-import="tkinter" \
           --hidden-import="tkinter.ttk" \
           --hidden-import="tkinter.filedialog" \
           --hidden-import="tkinter.messagebox" \
+          --hidden-import="tkinterdnd2" \
+          --hidden-import="PIL" \
+          --hidden-import="PIL.Image" \
+          --hidden-import="PIL.ImageTk" \
+          --hidden-import="numpy" \
           --collect-submodules="PIL" \
+          --collect-submodules="tkinter" \
+          --exclude-module="matplotlib" \
+          --exclude-module="scipy" \
+          --exclude-module="pandas" \
           --log-level=INFO \
-          ${{ steps.get_version.outputs.latest_file }} || {
-          echo "Build failed, trying minimal build..."
-          pyinstaller --onefile \
-            --name "os-materialmaker-${{ steps.get_version.outputs.version }}-linux" \
-            --hidden-import="tkinter" \
-            ${{ steps.get_version.outputs.latest_file }}
-        }
+          ${{ steps.get_version.outputs.latest_file }}
           
     - name: Create portable package (Windows)
       if: runner.os == 'Windows'
-      shell: bash
       run: |
-        mkdir -p portable-windows
-        cp dist/os-materialmaker-${{ steps.get_version.outputs.version }}-windows.exe portable-windows/
-        cp -r Resources portable-windows/ || echo "Resources directory not found"
-        cp README.md portable-windows/ || echo "README.md not found"
-        cp LICENSE portable-windows/ || echo "LICENSE not found"
+        New-Item -ItemType Directory -Path "portable-windows" -Force
+        Copy-Item "dist\os-materialmaker-${{ steps.get_version.outputs.version }}-windows.exe" "portable-windows\"
+        if (Test-Path "Resources") { Copy-Item "Resources" "portable-windows\" -Recurse }
+        if (Test-Path "README.md") { Copy-Item "README.md" "portable-windows\" }
+        if (Test-Path "LICENSE") { Copy-Item "LICENSE" "portable-windows\" }
         
-        # Erstelle Start-Script
-        cat > portable-windows/start.bat << 'EOF'
+        # Create start script
+        @"
         @echo off
         echo Starting os-materialmaker...
         os-materialmaker-${{ steps.get_version.outputs.version }}-windows.exe
         pause
-        EOF
+        "@ | Out-File -FilePath "portable-windows\start.bat" -Encoding ASCII
         
     - name: Create portable package (Linux)
       if: runner.os == 'Linux'
       run: |
         mkdir -p portable-linux
-        cp dist/os-materialmaker-${{ steps.get_version.outputs.version }}-linux portable-linux/
-        cp -r Resources portable-linux/ || echo "Resources directory not found"
-        cp README.md portable-linux/ || echo "README.md not found"
-        cp LICENSE portable-linux/ || echo "LICENSE not found"
-        chmod +x portable-linux/os-materialmaker-${{ steps.get_version.outputs.version }}-linux
+        cp "dist/os-materialmaker-${{ steps.get_version.outputs.version }}-linux" portable-linux/
+        if [ -d "Resources" ]; then cp -r Resources portable-linux/; fi
+        if [ -f "README.md" ]; then cp README.md portable-linux/; fi
+        if [ -f "LICENSE" ]; then cp LICENSE portable-linux/; fi
+        chmod +x "portable-linux/os-materialmaker-${{ steps.get_version.outputs.version }}-linux"
         
-        # Erstelle Start-Script
-        cat > portable-linux/start.sh << 'EOF'
+        # Create start script
+        cat > portable-linux/start.sh << EOF
         #!/bin/bash
         echo "Starting os-materialmaker..."
         ./os-materialmaker-${{ steps.get_version.outputs.version }}-linux
@@ -193,13 +228,8 @@ jobs:
         
     - name: Create ZIP archive (Windows)
       if: runner.os == 'Windows'
-      shell: bash
       run: |
-        cd portable-windows
-        # Versuche zuerst 7z, dann PowerShell als Fallback
-        7z a ../os-materialmaker-${{ steps.get_version.outputs.version }}-windows-portable.zip . || \
-        powershell Compress-Archive -Path . -DestinationPath ../os-materialmaker-${{ steps.get_version.outputs.version }}-windows-portable.zip
-        cd ..
+        Compress-Archive -Path "portable-windows\*" -DestinationPath "os-materialmaker-${{ steps.get_version.outputs.version }}-windows-portable.zip"
         
     - name: Create TAR archive (Linux)
       if: runner.os == 'Linux'
