@@ -128,39 +128,29 @@ jobs:
           echo "version=$VERSION" >> $GITHUB_OUTPUT
           echo "Release version from file: $VERSION"
         fi
-      
-    - name: Create Release
-      uses: softprops/action-gh-release@v1
+        
+    # Upload final artifacts with clear names (alternative to release)
+    - name: Upload final release artifacts  
+      uses: actions/upload-artifact@v4
       with:
-        name: ${{ startsWith(github.ref, 'refs/tags/v') && format('Release v{0}', steps.get_version.outputs.version) || format('Development Build v{0}', steps.get_version.outputs.version) }}
-        tag_name: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || format('dev-v{0}', steps.get_version.outputs.version) }}
-        body: |
-          ## OS Material Maker v${{ steps.get_version.outputs.version }}
-          
-          ### 🚀 Features
-          - PBR Material Editor für Second Life/OpenSim
-          - Kategorisierte Parameter mit Emoji-Icons  
-          - GLTF Export Funktionalität
-          - Auto-Find Algorithmus für Texturen
-          - Vereinfachte 2D-Vorschau
-          
-          ### 📦 Downloads
-          - **Windows EXE**: `os-materialmaker-${{ steps.get_version.outputs.version }}-windows.exe`
-          - **Windows Portable**: `os-materialmaker-${{ steps.get_version.outputs.version }}-windows-portable.zip`
-          
-          ### 🛠️ Installation
-          1. Download das Windows EXE oder Portable ZIP
-          2. Für Portable: Entpacke und führe `start.bat` aus
-          3. Für EXE: Direkt ausführen
-          
-          ### 📋 Systemanforderungen
-          - Windows 10 oder höher
-          - Keine Python-Installation erforderlich
-          
-        files: |
+        name: release-files-v${{ steps.get_version.outputs.version }}
+        path: |
           **/*.exe
           **/*.zip
-        draft: false
-        prerelease: ${{ !startsWith(github.ref, 'refs/tags/v') }}
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        retention-days: 90
+    
+    - name: Create simple release summary
+      run: |
+        echo "## 📦 Release Summary v${{ steps.get_version.outputs.version }}" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "### Generated Files:" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        for file in *.exe *.zip; do
+          if [ -f "$file" ]; then
+            size=$(ls -lh "$file" | awk '{print $5}')
+            echo "- 📁 **$file** ($size)" >> $GITHUB_STEP_SUMMARY
+          fi
+        done
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "### Download:" >> $GITHUB_STEP_SUMMARY
+        echo "Download all files from the **Artifacts** section above." >> $GITHUB_STEP_SUMMARY
