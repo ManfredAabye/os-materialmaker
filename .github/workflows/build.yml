@@ -1,4 +1,4 @@
-name: Build os-materialmaker
+name: Build os-materialmaker Windows
 
 on:
   push:
@@ -90,7 +90,8 @@ jobs:
           os-materialmaker-${{ steps.get_version.outputs.version }}-windows-portable.zip
 
   release:
-    if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
+    # Erstelle Release bei Tags, manueller Ausführung ODER bei Push auf main
+    if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
     needs: [build-windows]
     runs-on: ubuntu-latest
     
@@ -112,17 +113,27 @@ jobs:
         echo "=== ZIP files ==="  
         find . -name "*.zip" -type f || echo "No ZIP files found"
         
-    - name: Get version from tag
+    - name: Get version from tag or build
       id: get_version
       run: |
-        VERSION=${GITHUB_REF#refs/tags/v}
-        echo "version=$VERSION" >> $GITHUB_OUTPUT
-        echo "Release version: $VERSION"
+        if [[ "${{ github.ref }}" == refs/tags/v* ]]; then
+          # Release von Git-Tag
+          VERSION=${GITHUB_REF#refs/tags/v}
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "Release version from tag: $VERSION"
+        else
+          # Release von normalem Push - verwende aktuelle Datei-Version
+          latest=$(ls os-materialmaker_*.py | sort -V | tail -1 2>/dev/null || echo "os-materialmaker_1.0.74.py")
+          VERSION=$(echo $latest | sed 's/os-materialmaker_\(.*\)\.py/\1/')
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "Release version from file: $VERSION"
+        fi
       
     - name: Create Release
       uses: softprops/action-gh-release@v1
       with:
-        name: Release v${{ steps.get_version.outputs.version }}
+        name: ${{ startsWith(github.ref, 'refs/tags/v') && format('Release v{0}', steps.get_version.outputs.version) || format('Development Build v{0}', steps.get_version.outputs.version) }}
+        tag_name: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || format('dev-v{0}', steps.get_version.outputs.version) }}
         body: |
           ## OS Material Maker v${{ steps.get_version.outputs.version }}
           
@@ -150,6 +161,6 @@ jobs:
           **/*.exe
           **/*.zip
         draft: false
-        prerelease: false
+        prerelease: ${{ !startsWith(github.ref, 'refs/tags/v') }}
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
