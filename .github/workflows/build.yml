@@ -9,266 +9,75 @@ on:
   workflow_dispatch:
 
 jobs:
-  build:
-    strategy:
-      matrix:
-        os: [windows-latest, ubuntu-latest]
-        python-version: ['3.11', '3.12']
-    
-    runs-on: ${{ matrix.os }}
+  build-windows:
+    runs-on: windows-latest
     
     steps:
     - name: Checkout repository
       uses: actions/checkout@v4
       
-    - name: Set up Python ${{ matrix.python-version }}
+    - name: Set up Python 3.11
       uses: actions/setup-python@v5
       with:
-        python-version: ${{ matrix.python-version }}
+        python-version: '3.11'
         cache: 'pip'
-        
-    - name: Install system dependencies (Linux)
-      if: runner.os == 'Linux'
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y \
-          libgl1-mesa-dev \
-          libglib2.0-0 \
-          libxrandr2 \
-          libxss1 \
-          libxcursor1 \
-          libxcomposite1 \
-          libxi6 \
-          libxtst6 \
-          libgtk-3-0 \
-          python3-tk \
-          python3-dev \
-          build-essential \
-          libffi-dev \
-          libssl-dev \
-          pkg-config \
-          libasound2-dev
         
     - name: Install Python dependencies
       run: |
         python -m pip install --upgrade pip
-        pip install pyinstaller>=6.0.0
-        pip install pillow>=10.0.0
-        pip install requests>=2.31.0
-        pip install tkinterdnd2
-        pip install numpy
-        
-        # Install requirements.txt if it exists
-        python -c "
-        import os
-        if os.path.exists('requirements.txt'):
-            import subprocess
-            subprocess.run(['pip', 'install', '-r', 'requirements.txt'], check=False)
-            print('requirements.txt installed')
-        else:
-            print('requirements.txt not found')
-        "
+        pip install pyinstaller>=6.0.0 pillow>=10.0.0 requests>=2.31.0 tkinterdnd2 numpy
         
     - name: Get latest version file
       id: get_version
       run: |
-        # Find the latest version file using Python (cross-platform)
-        python -c "
-        import os, re
-        files = [f for f in os.listdir('.') if f.startswith('os-materialmaker_') and f.endswith('.py')]
-        if files:
-            # Sort by version number
-            def version_key(filename):
-                match = re.search(r'os-materialmaker_(\d+)\.(\d+)\.(\d+)\.py', filename)
-                if match:
-                    return tuple(map(int, match.groups()))
-                return (0, 0, 0)
-            latest = max(files, key=version_key)
-            version = re.search(r'os-materialmaker_(.+)\.py', latest).group(1)
-            print(f'latest_file={latest}')
-            print(f'version={version}')
-            # Write to GitHub output
-            with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
-                f.write(f'latest_file={latest}\n')
-                f.write(f'version={version}\n')
-        else:
-            print('No version files found')
-            exit(1)
-        "
+        $files = Get-ChildItem -Name "os-materialmaker_*.py" | Sort-Object
+        $latest = $files[-1]
+        $version = ($latest -replace "os-materialmaker_(.+)\.py", '$1')
+        Write-Output "latest_file=$latest" >> $env:GITHUB_OUTPUT
+        Write-Output "version=$version" >> $env:GITHUB_OUTPUT
+        Write-Host "Latest version: $version"
         
     - name: Syntax check
-      run: |
-        python -m py_compile ${{ steps.get_version.outputs.latest_file }}
+      run: python -m py_compile ${{ steps.get_version.outputs.latest_file }}
         
-    - name: Create build directory
+    - name: Build with PyInstaller
       run: |
-        python -c "import os; os.makedirs('dist', exist_ok=True)"
-        
-    - name: Build with PyInstaller (Windows)
-      if: runner.os == 'Windows'
-      run: |
-        # Check if icon exists and set path accordingly (PowerShell compatible)
         $iconPath = ""
-        if (Test-Path "Resources\PBRlogok.png") {
-          $iconPath = "Resources\PBRlogok.png"
-          Write-Host "Using icon: $iconPath"
-        } elseif (Test-Path "Resources\icons\app-icon.ico") {
-          $iconPath = "Resources\icons\app-icon.ico"
-          Write-Host "Using icon: $iconPath"
-        } else {
-          Write-Host "No icon found, building without icon"
-        }
+        if (Test-Path "Resources\PBRlogok.png") { $iconPath = "--icon=Resources\PBRlogok.png" }
         
-        # Build command
-        $buildArgs = @(
-          "--onefile",
-          "--windowed",
-          "--name", "os-materialmaker-${{ steps.get_version.outputs.version }}-windows",
-          "--add-data", "Resources;Resources"
-        )
+        pyinstaller --onefile --windowed --name "os-materialmaker-${{ steps.get_version.outputs.version }}-windows" $iconPath --add-data "Resources;Resources" --hidden-import="tkinter" --hidden-import="PIL" --hidden-import="tkinterdnd2" --hidden-import="numpy" ${{ steps.get_version.outputs.latest_file }}
         
-        if ($iconPath -ne "") {
-          $buildArgs += "--icon=$iconPath"
-        }
-        
-        $buildArgs += @(
-          "--hidden-import=PIL._tkinter_finder",
-          "--hidden-import=tkinter",
-          "--hidden-import=tkinter.ttk", 
-          "--hidden-import=tkinter.filedialog",
-          "--hidden-import=tkinter.messagebox",
-          "--hidden-import=tkinterdnd2",
-          "--hidden-import=PIL",
-          "--hidden-import=PIL.Image",
-          "--hidden-import=PIL.ImageTk",
-          "--hidden-import=numpy",
-          "--collect-submodules=PIL",
-          "--collect-submodules=tkinter",
-          "--exclude-module=matplotlib",
-          "--exclude-module=scipy", 
-          "--exclude-module=pandas",
-          "--log-level=INFO",
-          "${{ steps.get_version.outputs.latest_file }}"
-        )
-        
-        pyinstaller @buildArgs
-          
-    - name: Build with PyInstaller (Linux)
-      if: runner.os == 'Linux'
+    - name: Create portable package
       run: |
-        # Check for icon file
-        ICON_OPTION=""
-        if [ -f "Resources/PBRlogok.png" ]; then
-          ICON_OPTION="--icon=Resources/PBRlogok.png"
-          echo "Using icon: Resources/PBRlogok.png"
-        elif [ -f "Resources/icons/app-icon.ico" ]; then
-          ICON_OPTION="--icon=Resources/icons/app-icon.ico"
-          echo "Using icon: Resources/icons/app-icon.ico"
-        else
-          echo "No icon found, building without icon"
-        fi
+        New-Item -ItemType Directory -Path "portable" -Force
+        Copy-Item "dist\os-materialmaker-${{ steps.get_version.outputs.version }}-windows.exe" "portable\"
+        if (Test-Path "Resources") { Copy-Item "Resources" "portable\" -Recurse }
+        if (Test-Path "README.md") { Copy-Item "README.md" "portable\" }
+        if (Test-Path "LICENSE") { Copy-Item "LICENSE" "portable\" }
         
-        # Build with PyInstaller
-        pyinstaller --onefile \
-          --name "os-materialmaker-${{ steps.get_version.outputs.version }}-linux" \
-          ${ICON_OPTION} \
-          --add-data "Resources:Resources" \
-          --hidden-import="PIL._tkinter_finder" \
-          --hidden-import="tkinter" \
-          --hidden-import="tkinter.ttk" \
-          --hidden-import="tkinter.filedialog" \
-          --hidden-import="tkinter.messagebox" \
-          --hidden-import="tkinterdnd2" \
-          --hidden-import="PIL" \
-          --hidden-import="PIL.Image" \
-          --hidden-import="PIL.ImageTk" \
-          --hidden-import="numpy" \
-          --collect-submodules="PIL" \
-          --collect-submodules="tkinter" \
-          --exclude-module="matplotlib" \
-          --exclude-module="scipy" \
-          --exclude-module="pandas" \
-          --log-level=INFO \
-          ${{ steps.get_version.outputs.latest_file }}
-          
-    - name: Create portable package (Windows)
-      if: runner.os == 'Windows'
-      run: |
-        New-Item -ItemType Directory -Path "portable-windows" -Force
-        Copy-Item "dist\os-materialmaker-${{ steps.get_version.outputs.version }}-windows.exe" "portable-windows\"
-        if (Test-Path "Resources") { Copy-Item "Resources" "portable-windows\" -Recurse }
-        if (Test-Path "README.md") { Copy-Item "README.md" "portable-windows\" }
-        if (Test-Path "LICENSE") { Copy-Item "LICENSE" "portable-windows\" }
-        
-        # Create start script
         @"
         @echo off
         echo Starting os-materialmaker...
         os-materialmaker-${{ steps.get_version.outputs.version }}-windows.exe
         pause
-        "@ | Out-File -FilePath "portable-windows\start.bat" -Encoding ASCII
+        "@ | Out-File -FilePath "portable\start.bat" -Encoding ASCII
         
-    - name: Create portable package (Linux)
-      if: runner.os == 'Linux'
-      run: |
-        mkdir -p portable-linux
-        cp "dist/os-materialmaker-${{ steps.get_version.outputs.version }}-linux" portable-linux/
-        if [ -d "Resources" ]; then cp -r Resources portable-linux/; fi
-        if [ -f "README.md" ]; then cp README.md portable-linux/; fi
-        if [ -f "LICENSE" ]; then cp LICENSE portable-linux/; fi
-        chmod +x "portable-linux/os-materialmaker-${{ steps.get_version.outputs.version }}-linux"
+        Compress-Archive -Path "portable\*" -DestinationPath "os-materialmaker-${{ steps.get_version.outputs.version }}-windows-portable.zip"
         
-        # Create start script
-        cat > portable-linux/start.sh << EOF
-        #!/bin/bash
-        echo "Starting os-materialmaker..."
-        ./os-materialmaker-${{ steps.get_version.outputs.version }}-linux
-        EOF
-        chmod +x portable-linux/start.sh
-        
-    - name: Create ZIP archive (Windows)
-      if: runner.os == 'Windows'
-      run: |
-        Compress-Archive -Path "portable-windows\*" -DestinationPath "os-materialmaker-${{ steps.get_version.outputs.version }}-windows-portable.zip"
-        
-    - name: Create TAR archive (Linux)
-      if: runner.os == 'Linux'
-      run: |
-        tar -czf os-materialmaker-${{ steps.get_version.outputs.version }}-linux-portable.tar.gz -C portable-linux .
-        
-    - name: Upload Windows artifacts
-      if: runner.os == 'Windows'
+    - name: Upload artifacts
       uses: actions/upload-artifact@v4
       with:
-        name: os-materialmaker-windows-${{ steps.get_version.outputs.version }}
+        name: windows-build-${{ steps.get_version.outputs.version }}
         path: |
           dist/os-materialmaker-${{ steps.get_version.outputs.version }}-windows.exe
           os-materialmaker-${{ steps.get_version.outputs.version }}-windows-portable.zip
-          
-    - name: Upload Linux artifacts
-      if: runner.os == 'Linux'
-      uses: actions/upload-artifact@v4
-      with:
-        name: os-materialmaker-linux-${{ steps.get_version.outputs.version }}
-        path: |
-          dist/os-materialmaker-${{ steps.get_version.outputs.version }}-linux
-          os-materialmaker-${{ steps.get_version.outputs.version }}-linux-portable.tar.gz
 
   release:
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: build
+    needs: [build-windows]
     runs-on: ubuntu-latest
     
     steps:
-    - name: Checkout repository
-      uses: actions/checkout@v4
-      
-    - name: Get version from tag
-      id: get_tag_version
-      run: |
-        VERSION=${GITHUB_REF#refs/tags/v}
-        echo "version=$VERSION" >> $GITHUB_OUTPUT
-        
     - name: Download all artifacts
       uses: actions/download-artifact@v4
       with:
@@ -277,36 +86,8 @@ jobs:
     - name: Create Release
       uses: softprops/action-gh-release@v1
       with:
-        name: Release v${{ steps.get_tag_version.outputs.version }}
-        body: |
-          ## os-materialmaker v${{ steps.get_tag_version.outputs.version }}
-          
-          ### 🚀 New Features
-          - PBR Material Editor für Second Life/OpenSim
-          - GLTF Export mit GLTF-Packer Kompatibilität
-          - Auto-Find Algorithmus für Texturen
-          - Vereinfachte 2D-Vorschau
-          
-          ### 📦 Downloads
-          - **Windows**: `os-materialmaker-*-windows-portable.zip`
-          - **Linux**: `os-materialmaker-*-linux-portable.tar.gz`
-          
-          ### 🛠️ Installation
-          1. Download für dein Betriebssystem
-          2. Entpacke das Archiv
-          3. Führe `start.bat` (Windows) oder `start.sh` (Linux) aus
-          
-          ### 📋 Systemanforderungen
-          - Windows 10+ oder Linux (Ubuntu 20.04+)
-          - Python 3.11+ (falls aus Source)
-          - 4GB RAM empfohlen
-          
         files: |
-          *windows-portable.zip
-          *linux-portable.tar.gz
-          *windows.exe
-          *linux
-        draft: false
-        prerelease: false
+          *-portable.zip
+          os-materialmaker-*-windows.exe
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
