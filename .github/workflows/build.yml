@@ -1,4 +1,4 @@
-name: Build os-materialmaker
+name: Build os-materialmaker Windows
 
 on:
   push:
@@ -30,15 +30,32 @@ jobs:
     - name: Get latest version file
       id: get_version
       run: |
-        $files = Get-ChildItem -Name "os-materialmaker_*.py" | Sort-Object
-        $latest = $files[-1]
+        $files = Get-ChildItem -Name "os-materialmaker_*.py" | Sort-Object {
+          # Extract version numbers for proper sorting
+          if ($_ -match "os-materialmaker_(\d+)\.(\d+)\.(\d+)\.py") {
+            [version]"$($matches[1]).$($matches[2]).$($matches[3])"
+          } else { [version]"0.0.0" }
+        }
+        $latest = $files | Select-Object -Last 1
+        if (-not $latest) {
+          Write-Error "No os-materialmaker_*.py files found!"
+          exit 1
+        }
         $version = ($latest -replace "os-materialmaker_(.+)\.py", '$1')
         Write-Output "latest_file=$latest" >> $env:GITHUB_OUTPUT
         Write-Output "version=$version" >> $env:GITHUB_OUTPUT
-        Write-Host "Latest version: $version"
+        Write-Host "Latest file: $latest"
+        Write-Host "Version: $version"
         
     - name: Syntax check
-      run: python -m py_compile ${{ steps.get_version.outputs.latest_file }}
+      run: |
+        $file = "${{ steps.get_version.outputs.latest_file }}"
+        Write-Host "Checking syntax for file: $file"
+        if (-not (Test-Path $file)) {
+          Write-Error "File not found: $file"
+          exit 1
+        }
+        python -m py_compile $file
         
     - name: Build with PyInstaller
       run: |
