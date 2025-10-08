@@ -1,4 +1,4 @@
-name: Build os-materialmaker Windows
+name: Build os-materialmaker
 
 on:
   push:
@@ -90,21 +90,66 @@ jobs:
           os-materialmaker-${{ steps.get_version.outputs.version }}-windows-portable.zip
 
   release:
-    if: startsWith(github.ref, 'refs/tags/v')
+    if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
     needs: [build-windows]
     runs-on: ubuntu-latest
     
     steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      
     - name: Download all artifacts
       uses: actions/download-artifact@v4
       with:
         merge-multiple: true
+        
+    - name: List downloaded files (debug)
+      run: |
+        echo "=== Downloaded files ==="
+        ls -la
+        echo "=== EXE files ==="
+        find . -name "*.exe" -type f || echo "No EXE files found"
+        echo "=== ZIP files ==="  
+        find . -name "*.zip" -type f || echo "No ZIP files found"
+        
+    - name: Get version from tag
+      id: get_version
+      run: |
+        VERSION=${GITHUB_REF#refs/tags/v}
+        echo "version=$VERSION" >> $GITHUB_OUTPUT
+        echo "Release version: $VERSION"
       
     - name: Create Release
       uses: softprops/action-gh-release@v1
       with:
+        name: Release v${{ steps.get_version.outputs.version }}
+        body: |
+          ## OS Material Maker v${{ steps.get_version.outputs.version }}
+          
+          ### 🚀 Features
+          - PBR Material Editor für Second Life/OpenSim
+          - Kategorisierte Parameter mit Emoji-Icons  
+          - GLTF Export Funktionalität
+          - Auto-Find Algorithmus für Texturen
+          - Vereinfachte 2D-Vorschau
+          
+          ### 📦 Downloads
+          - **Windows EXE**: `os-materialmaker-${{ steps.get_version.outputs.version }}-windows.exe`
+          - **Windows Portable**: `os-materialmaker-${{ steps.get_version.outputs.version }}-windows-portable.zip`
+          
+          ### 🛠️ Installation
+          1. Download das Windows EXE oder Portable ZIP
+          2. Für Portable: Entpacke und führe `start.bat` aus
+          3. Für EXE: Direkt ausführen
+          
+          ### 📋 Systemanforderungen
+          - Windows 10 oder höher
+          - Keine Python-Installation erforderlich
+          
         files: |
-          *-portable.zip
-          os-materialmaker-*-windows.exe
+          **/*.exe
+          **/*.zip
+        draft: false
+        prerelease: false
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
