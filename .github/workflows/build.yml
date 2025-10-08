@@ -2,7 +2,7 @@ name: Build os-materialmaker Windows
 
 on:
   push:
-    branches: [ main, develop ]
+    branches: [ main ]
     tags: [ 'v*' ]
   pull_request:
     branches: [ main ]
@@ -129,8 +129,19 @@ jobs:
           echo "Release version from file: $VERSION"
         fi
         
+    # Backup: Upload als Artifacts falls Release fehlschlägt
+    - name: Upload release artifacts as backup
+      uses: actions/upload-artifact@v4
+      with:
+        name: release-files-v${{ steps.get_version.outputs.version }}
+        path: |
+          **/*.exe
+          **/*.zip
+        retention-days: 90
+        
     - name: Create GitHub Release
       uses: softprops/action-gh-release@v1
+      continue-on-error: true
       with:
         tag_name: "os-materialmaker-v${{ steps.get_version.outputs.version }}-${{ github.sha }}"
         name: "OS Material Maker v${{ steps.get_version.outputs.version }} (Build ${{ github.sha }})"
@@ -152,4 +163,21 @@ jobs:
           **/*.exe
           **/*.zip
       env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        GITHUB_TOKEN: ${{ secrets.PAT_TOKEN || secrets.GITHUB_TOKEN }}
+        
+    - name: Release Summary
+      run: |
+        echo "## 📦 Release Summary v${{ steps.get_version.outputs.version }}" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "### Generated Files:" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        for file in *.exe *.zip; do
+          if [ -f "$file" ]; then
+            size=$(ls -lh "$file" | awk '{print $5}')
+            echo "- 📁 **$file** ($size)" >> $GITHUB_STEP_SUMMARY
+          fi
+        done
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "### Download:" >> $GITHUB_STEP_SUMMARY
+        echo "⚠️ **Falls Release fehlschlägt**: Download aus **Artifacts** Section oben." >> $GITHUB_STEP_SUMMARY
+        echo "✅ **Falls Release erfolgreich**: Download aus **Releases** auf GitHub." >> $GITHUB_STEP_SUMMARY
